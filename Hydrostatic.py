@@ -165,7 +165,8 @@ def HydrostaticShapeLith(radius, rho, ilith, potential, omega, lmax,
 
     for k in range(kmax):
         # calculate mass, taking into account the flattening of each interface
-        for i in range(1, n+1):
+        # i can only run to len(hlm), the index of the lithosphere SCS
+        for i in range(1, len(hlm)):
             if i == 1:
                 mass[1] = 4. * np.pi * radius[1]**3 * rho[0] / 3. + \
                     4. * np.pi * rho[0] * radius[1] * \
