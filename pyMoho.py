@@ -114,9 +114,9 @@ def pyMoho(pot, topo, lmax, rho_c, rho_m, thickave, filter_type=0, half=None,
 
     temp_grid = topo_grid - moho_grid3
     if quiet is False:
-        print('Maximum Crustal thickness (km) = {:e}'.format(
+        print('Maximum Crustal thickness (km) = {:5.1f}'.format(
             temp_grid.data.max() / 1.e3))
-        print('Minimum Crustal thickness (km) = {:e}'.format(
+        print('Minimum Crustal thickness (km) = {:5.1f}'.format(
             temp_grid.data.min() / 1.e3))
 
     moho.coeffs = pyshtools.gravmag.BAtoHilmDH(ba, moho_grid3.data, nmax,
@@ -187,9 +187,8 @@ def pyMoho(pot, topo, lmax, rho_c, rho_m, thickave, filter_type=0, half=None,
         moho_grid3 = moho_grid2
         moho_grid2 = moho_grid
 
-        if abs(temp_grid.data).max() > 100.e3:
-            print('Not converging')
-            exit(1)
+        if abs(temp_grid.data).max() > 350.e3:
+            raise ValueError("Crustal thickness exceeds maximum")
 
     return moho
 
