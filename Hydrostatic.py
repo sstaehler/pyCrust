@@ -98,7 +98,8 @@ def HydrostaticShapeLith(radius, rho, ilith, potential, omega, lmax,
     gm = potential.gm
     r_ref = potential.r_ref
 
-    hlm = [pyshtools.SHCoeffs.from_zeros(lmax) for i in range(ilith+1)]
+    #hlm = [pyshtools.SHCoeffs.from_zeros(lmax) for i in range(ilith+1)]
+    hlm = [pyshtools.SHCoeffs.from_zeros(lmax) for i in range(n+1)]
     clm_hydro = pyshtools.SHCoeffs.from_zeros(lmax)
 
     for i in range(ilith+1):
@@ -182,7 +183,7 @@ def HydrostaticShapeLith(radius, rho, ilith, potential, omega, lmax,
                     8. * np.pi * np.sqrt(5.) / 21. * rho[i-1] * \
                     (hlm[i].coeffs[0, 2, 0]**3 - hlm[i-1].coeffs[0, 2, 0]**3)
 
-        mass_model = mass[n]
+        mass_model = mass[-1]
 
         # calculate finite amplitude corrections
         if finiteamplitude and k > 0:
