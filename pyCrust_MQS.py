@@ -15,22 +15,22 @@ a specified minimum crustal thickness.
 """
 import numpy as np
 import pyshtools
-import sys
 import pyMoho
 from Hydrostatic import HydrostaticShapeLith
 from multiprocessing import Pool
+import glob
+import h5py
 
-def calc_crust(ifile,         # Model number 
+
+def calc_crust(mantlefile,    # filename for mantle profile input
+               fnam_out_model,      # Output file name for thickness map
+               gravfile='Data/gmm3_120_sha.tab',
+               topofile='Data/MarsTopo719.shape',
+               densityfile='Data/dichotomy_359.sh',
+               fnam_out_plot=None,      # Output file name for plot of map
                t0=1.e3,       # minimum crustal thickness
                d_lith=300.e3  # Lithosphere thickness
                ):
-
-
-    # Load input file
-    gravfile = 'Data/gmm3_120_sha.tab'
-    topofile = 'Data/MarsTopo719.shape'
-    densityfile = 'Data/dichotomy_359.sh'
-    mantlefile = 'MVD/model4mvdSAN_AK%d00.dat' % ifile
 
     lmax_calc = 90
     lmax = lmax_calc * 4
@@ -80,16 +80,23 @@ def calc_crust(ifile,         # Model number
     nlayer = nlines - ncomments
     radius = np.zeros(nlayer)
     rho = np.zeros(nlayer)
+    vp = np.zeros(nlayer)
+    vs = np.zeros(nlayer)
     lines = lines[::-1]
     crust_index = nlayer - 6
     for i in range(0, nlayer):
         data = lines[i].split()
         radius[i] = float(data[0])
         rho[i] = float(data[1])
+        vp[i] = float(data[2])
+        vs[i] = float(data[3])
         # Q = float(data[4])
         # if (Q in (500, 600)) and Q_last not in (500, 600):
         #     crust_index = i
         # Q_last = Q
+
+    # Correct the sub-Moho parameters
+    radius[-8] = radius[-7]
 
     # Calculate crustal density
     mass_crust = 0
@@ -125,101 +132,118 @@ def calc_crust(ifile,         # Model number
     print('Actual depth of lithosphere in discretized model (km) = {:6.1f}'
           .format((r0_model - radius[i_lith]) / 1.e3))
 
-    thickave = r0_model - radius[crust_index]  # initial guess of average crustal thickness
-    print('Crustal thickness (km) = {:5.1f}'.format((r0_model -
-                                                     radius[crust_index]) / 1e3))
+    # initial guess of average crustal thickness
+    thickave = r0_model - radius[crust_index]
+    print('Crustal thickness (km) = {:5.1f}'.format(thickave / 1e3))
     print('Moho layer: {:d}'.format(crust_index))
 
     # --- Compute gravity contribution from hydrostatic density interfaces ---
 
     hlm, clm_hydro, mass_model = HydrostaticShapeLith(radius, rho, i_lith,
                                                       potential, omega,
-                                                      lmax_hydro, finiteamplitude=False)
+                                                      lmax_hydro,
+                                                      finiteamplitude=False)
 
     print('Total mass of model (kg) = {:e}'.format(mass_model))
     print('% of J2 arising from beneath lithosphere = {:f}'
           .format(clm_hydro.coeffs[0, 2, 0]/potential.coeffs[0, 2, 0] * 100.))
 
-    potential.coeffs[:, :lmax_hydro+1, :lmax_hydro+1] -= clm_hydro.coeffs[:, :lmax_hydro+1, :lmax_hydro+1]
+    potential.coeffs[:, :lmax_hydro+1, :lmax_hydro+1] -= \
+        clm_hydro.coeffs[:, :lmax_hydro+1, :lmax_hydro+1]
 
     # --- Constant density model ---
     print('-- Constant density model --\nrho_c = {:f}'.format(rho_c))
 
     tmin = 1.e9
     converged = False
-    #while abs(tmin - t0) > t0_sigma:
-    while not converged: 
+    while not converged:
         # iterate to fit assumed minimum crustal thickness
 
         moho = pyMoho.pyMoho(potential, topo, lmax, rho_c, rho_mantle,
                              thickave, filter_type=filter, half=half,
                              lmax_calc=lmax_calc, nmax=nmax, quiet=True)
-
-        thick_grid = (topo.pad(lmax) - moho.pad(lmax)).expand(grid='DH2')
-        print('Average crustal thickness (km) = {:6.2f}'.format(thickave / 1.e3))
+        thick = topo.pad(lmax) - moho.pad(lmax)
+        print('Average crustal thickness (km) = {:6.2f}'.format(thickave /
+                                                                1.e3))
+        thick_insight = thick.expand(lat=lat_insight, lon=lon_insight)
         print('Crustal thickness at InSight landing sites (km) = {:6.2f}'
-              .format((topo.pad(lmax) - moho.pad(lmax))
-                      .expand(lat=lat_insight, lon=lon_insight) / 1.e3))
+              .format(thick_insight / 1.e3))
+
+        thick_grid = thick.expand(grid='DH2')
         tmin = thick_grid.data.min()
         tmax = thick_grid.data.max()
         print('Minimum thickness (km) = {:6.2f}'.format(tmin / 1.e3))
         print('Maximum thickness (km) = {:6.2f}'.format(tmax / 1.e3))
-        
+
         if tmin - t0 < - t0_sigma:
             thickave += t0 - tmin
         else:
             converged = True
 
+    if fnam_out_plot:
+        thick_grid.plot(show=False, fname=fnam_out_plot,
+                        vmin=0.0, vmax=120.e3)
 
-    thick_grid.plot(show=False, fname='Map/Model_%03d.png' % ifile,
-                    vmin=0.0, vmax=120.e3)
-
-    moho.plot_spectrum(show=False, fname='Spectrum/Model_%03d.png' % ifile)
+    # moho.plot_spectrum(show=False, fname='Spectrum/Model_%03d.png' % ifile)
 
     # Write Model to disk
-    topo_grid = (topo.pad(lmax)).expand(grid='DH2', lmax=89)
-    moho_grid = (moho.pad(lmax)).expand(grid='DH2', lmax=89)
-    lats = topo_grid._lats()
-    lons = topo_grid._lons()
-    with open('Output/Model_%03d.txt' % ifile, 'w') as fid:
-        for j in np.arange(len(lats)-1, -1, -1): #j, lon in enumerate(lons[:]):
-            for i in np.arange(0, len(lons)): #, lat in enumerate(lats[:]):
-                fid.write('%5.1f, %5.1f, %6.2f, %6.2f\n' % 
-                          (lons[i] + 0.5, 
-                           lats[j] - 0.5, 
-                           topo_grid.data[j, i]*1e-3 - moho_grid.data[j, i]*1e-3,
-                           topo_grid.data[j, i]*1e-3))
+    # lmax_out = 17  # 89
+    # topo_grid = (topo.pad(lmax)).expand(grid='DH2', lmax=lmax_out)
+    # moho_grid = (moho.pad(lmax)).expand(grid='DH2', lmax=lmax_out)
+    # lats = topo_grid._lats()
+    # lons = topo_grid._lons()
+    lats = np.arange(-87.5, 90., 5.)
+    lons = np.arange(0, 360, 5)
 
-    np.savez_compressed(file='Output_pickle/Model_%03d.npz' % ifile, 
-                        topo=topo_grid.data, 
-                        moho=moho_grid.data,
-                        lats = topo_grid._lats(),
-                        lons = topo_grid._lons())
+    lats_grid, lons_grid = np.meshgrid(lats, lons)
+    topo_grid = (topo).expand(lat=lats_grid, lon=lons_grid)
+    moho_grid = (moho).expand(lat=lats_grid, lon=lons_grid)
 
-    with open('thickness.txt', 'a') as fid:
-        fid.write('%d, %f, %f, %f, %f, %f\n' %
-                  (ifile, r0_model - radius[crust_index], thickave, 
-                   tmin, tmax, rho_mantle))
+    with h5py.File(fnam_out_model, 'w') as f:
+        print('Writing to %s' % fnam_out_model)
+        grp_crust = f.create_group('crust')
+        grp_crust.create_dataset('moho', data=moho_grid.data)
+        grp_crust.create_dataset('topo', data=topo_grid.data)
+        grp_crust.create_dataset('latitudes', data=lats)
+        grp_crust.create_dataset('longitudes', data=lons)
+
+        grp_mantle = f.create_group('mantle')
+        grp_mantle.create_dataset('radius', data=radius)
+        grp_mantle.create_dataset('rho', data=rho)
+        grp_mantle.create_dataset('vp', data=vp)
+        grp_mantle.create_dataset('vs', data=vs)
+
+        grp_status = f.create_group('status')
+        grp_status.create_dataset('thickness_insight', data=thick_insight)
+        grp_status.create_dataset('thickness_average_pycrust', data=thickave)
+        grp_status.create_dataset('thickness_average_input',
+                                  data=r0_model - radius[crust_index])
+        grp_status.create_dataset('thickness_lithosphere', data=d_lith)
+        grp_status.create_dataset('thickness_minimum', data=tmin)
+        grp_status.create_dataset('thickness_maximum', data=tmax)
+        grp_status.create_dataset('rho_crust', data=rho_c)
+        grp_status.create_dataset('rho_mantle', data=rho_mantle)
+
+
+def calc_crust_mult(fnam_in):
+    print(fnam_in)
+    ifile = int(fnam_in[-10:-4])
+    calc_crust(mantlefile=fnam_in,
+               fnam_out_model='output/mantlecrust_%06d.h5' % ifile,
+               gravfile='../../Data/gmm3_120_sha.tab',
+               topofile='../../Data/MarsTopo719.shape',
+               densityfile='../../Data/dichotomy_359.sh')
 
 
 # ==== EXECUTE SCRIPT ====
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        ifile = sys.argv[1]
-        calc_crust(ifile=int(ifile), d_lith=float(sys.argv[2])*1e3)
-    else:
-        with Pool(12) as p:
-            p.map(calc_crust, np.arange(1, 400))
-        # with open('thickness.txt', 'w') as fid:
-
-        #     for ifile in np.arange(1, 400):
-        #         fnam = 'MVD/model4mvdSAN_AK%d00.dat' % ifile
-        #         try:
-        #             crust_av_in, crust_av_out, tmin, tmax, rho \
-        #                     = calc_crust(fnam=fnam, d_lith=200e3)
-        #         except(ValueError):
-        #             print('Model %d did not converge' % ifile)
-        #         else:
-        #             fid.write('%d, %f, %f, %f, %f, %f\n' %
-        #                       (ifile, crust_av_in, crust_av_out,
-        #                        tmin, tmax, rho))
+    # if len(sys.argv) > 1:
+    #     fnam_in = sys.argv[1]
+    #     fnam_out = sys.argv[2]
+    #     calc_crust(mantlefile=fnam_in, fnam_out_model=fnam_out)
+    # else:
+    dir_in = 'MVD/*.dat'
+    files = glob.glob(dir_in)
+    files.sort()
+    with Pool(4) as p:
+        p.map(calc_crust_mult, files)
