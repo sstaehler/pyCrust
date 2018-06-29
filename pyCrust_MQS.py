@@ -20,14 +20,17 @@ import pyMoho
 from Hydrostatic import HydrostaticShapeLith
 from multiprocessing import Pool
 
-def calc_crust(fnam='MVD/model4mvdSAN_AK100.dat',
+def calc_crust(ifile,         # Model number 
                t0=1.e3,       # minimum crustal thickness
-               d_lith=150.e3  # Lithosphere thickness
+               d_lith=300.e3  # Lithosphere thickness
                ):
+
+
     # Load input file
     gravfile = 'Data/gmm3_120_sha.tab'
     topofile = 'Data/MarsTopo719.shape'
     densityfile = 'Data/dichotomy_359.sh'
+    mantlefile = 'MVD/model4mvdSAN_AK%d00.dat' % ifile
 
     lmax_calc = 90
     lmax = lmax_calc * 4
@@ -67,9 +70,9 @@ def calc_crust(fnam='MVD/model4mvdSAN_AK100.dat',
 
     # --- read 1D reference interior model ---
 
-    print('=== Reading model {:s} ==='.format(fnam))
+    print('=== Reading model {:s} ==='.format(mantlefile))
 
-    with open(fnam, 'r') as f:
+    with open(mantlefile, 'r') as f:
         lines = f.readlines()
 
     ncomments = 4  # Remove initial four lines in AxiSEM files
@@ -143,8 +146,9 @@ def calc_crust(fnam='MVD/model4mvdSAN_AK100.dat',
     print('-- Constant density model --\nrho_c = {:f}'.format(rho_c))
 
     tmin = 1.e9
-
-    while abs(tmin - t0) > t0_sigma:
+    converged = False
+    #while abs(tmin - t0) > t0_sigma:
+    while not converged: 
         # iterate to fit assumed minimum crustal thickness
 
         moho = pyMoho.pyMoho(potential, topo, lmax, rho_c, rho_mantle,
@@ -160,31 +164,52 @@ def calc_crust(fnam='MVD/model4mvdSAN_AK100.dat',
         tmax = thick_grid.data.max()
         print('Minimum thickness (km) = {:6.2f}'.format(tmin / 1.e3))
         print('Maximum thickness (km) = {:6.2f}'.format(tmax / 1.e3))
-        thickave += t0 - tmin
+        
+        if tmin - t0 < - t0_sigma:
+            thickave += t0 - tmin
+        else:
+            converged = True
 
-    #thick_grid.plot(show=False, fname='Thick-Mars_%s-1.png' % model_name[model])
-    thick_grid.plot(show=False, fname='Thick-Mars-1.png')
 
-    #moho.plot_spectrum(show=False, fname='Moho-spectrum-Mars-1.png')
-    #return r0_model - radius[crust_index], thickave, tmin, tmax, rho_mantle
+    thick_grid.plot(show=False, fname='Map/Model_%03d.png' % ifile,
+                    vmin=0.0, vmax=120.e3)
+
+    moho.plot_spectrum(show=False, fname='Spectrum/Model_%03d.png' % ifile)
+
+    # Write Model to disk
+    topo_grid = (topo.pad(lmax)).expand(grid='DH2', lmax=89)
+    moho_grid = (moho.pad(lmax)).expand(grid='DH2', lmax=89)
+    lats = topo_grid._lats()
+    lons = topo_grid._lons()
+    with open('Output/Model_%03d.txt' % ifile, 'w') as fid:
+        for j in np.arange(len(lats)-1, -1, -1): #j, lon in enumerate(lons[:]):
+            for i in np.arange(0, len(lons)): #, lat in enumerate(lats[:]):
+                fid.write('%5.1f, %5.1f, %6.2f, %6.2f\n' % 
+                          (lons[i] + 0.5, 
+                           lats[j] - 0.5, 
+                           topo_grid.data[j, i]*1e-3 - moho_grid.data[j, i]*1e-3,
+                           topo_grid.data[j, i]*1e-3))
+
+    np.savez_compressed(file='Output_pickle/Model_%03d.npz' % ifile, 
+                        topo=topo_grid.data, 
+                        moho=moho_grid.data,
+                        lats = topo_grid._lats(),
+                        lons = topo_grid._lons())
+
     with open('thickness.txt', 'a') as fid:
         fid.write('%d, %f, %f, %f, %f, %f\n' %
-                  (ifile, crust_av_in, crust_av_out,
-                   tmin, tmax, rho))
+                  (ifile, r0_model - radius[crust_index], thickave, 
+                   tmin, tmax, rho_mantle))
 
 
 # ==== EXECUTE SCRIPT ====
 if __name__ == "__main__":
     if len(sys.argv) > 1:
-        filename = sys.argv[1]
-        calc_crust(fnam=filename, d_lith=float(sys.argv[2])*1e3)
+        ifile = sys.argv[1]
+        calc_crust(ifile=int(ifile), d_lith=float(sys.argv[2])*1e3)
     else:
-        files = []
-        for ifile in np.arange(1, 400):
-            files.append('MVD/model4mvdSAN_AK%d00.dat' % ifile)
-
-        with Pool(4) as p:
-            p.map(calc_crust, files)
+        with Pool(12) as p:
+            p.map(calc_crust, np.arange(1, 400))
         # with open('thickness.txt', 'w') as fid:
 
         #     for ifile in np.arange(1, 400):
