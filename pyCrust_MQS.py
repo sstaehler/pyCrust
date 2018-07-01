@@ -184,7 +184,6 @@ def calc_crust(mantlefile,    # filename for mantle profile input
         thick_grid.plot(show=False, fname=fnam_out_plot,
                         vmin=0.0, vmax=120.e3)
 
-    # moho.plot_spectrum(show=False, fname='Spectrum/Model_%03d.png' % ifile)
 
     # Write Model to disk
     # lmax_out = 17  # 89
@@ -195,9 +194,37 @@ def calc_crust(mantlefile,    # filename for mantle profile input
     lats = np.arange(-87.5, 90., 5.)
     lons = np.arange(0, 360, 5)
 
+
+    # Apply tapered anti-aliasing filter to SH before transformation
+    lmax_filter = 17
+    order = 2
+    lvals = np.zeros_like(topo.coeffs)
+    for i in range(0, lvals.shape[1]):
+        for j in range(0, lvals.shape[2]):
+            l = np.max([i, j])
+            lvals[:, i, j] = np.exp(-2. * np.pi * l ** order /
+                                    (2. * lmax_filter) ** order)
+
+    topo.coeffs *= lvals
+    lvals = np.zeros_like(moho.coeffs)
+    for i in range(0, lvals.shape[1]):
+        for j in range(0, lvals.shape[2]):
+            l = np.max([i, j])
+            #lvals[:, i, j] = np.exp(-2. * np.pi * l ** order /
+            lvals[:, i, j] = np.exp(-2. * l ** order /
+                                    (2. * lmax_filter) ** order)
+    moho.coeffs *= lvals
+
+    #moho.plot_spectrum(show=False, fname='%s.png' % fnam_out_model)
+
+
     lats_grid, lons_grid = np.meshgrid(lats, lons)
     topo_grid = (topo).expand(lat=lats_grid, lon=lons_grid)
     moho_grid = (moho).expand(lat=lats_grid, lon=lons_grid)
+    moho.expand(grid='DH2').plot(show=False, fname='%s_moho.png' % fnam_out_model)
+    topo.expand(grid='DH2').plot(show=False, fname='%s_topo.png' % fnam_out_model)
+    (topo.pad(lmax) - moho.pad(lmax)).expand(grid='DH2').plot(show=False,
+            fname='%s_thick.png' % fnam_out_model)
 
     with h5py.File(fnam_out_model, 'w') as f:
         print('Writing to %s' % fnam_out_model)
@@ -245,5 +272,5 @@ if __name__ == "__main__":
     dir_in = 'MVD/*.dat'
     files = glob.glob(dir_in)
     files.sort()
-    with Pool(4) as p:
+    with Pool(1) as p:
         p.map(calc_crust_mult, files)
