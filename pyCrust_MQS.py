@@ -196,7 +196,7 @@ def calc_crust(mantlefile,    # filename for mantle profile input
 
 
     # Apply tapered anti-aliasing filter to SH before transformation
-    lmax_filter = 17
+    lmax_filter = 36 # 17
     order = 2
     lvals = np.zeros_like(topo.coeffs)
     for i in range(0, lvals.shape[1]):
@@ -210,8 +210,7 @@ def calc_crust(mantlefile,    # filename for mantle profile input
     for i in range(0, lvals.shape[1]):
         for j in range(0, lvals.shape[2]):
             l = np.max([i, j])
-            #lvals[:, i, j] = np.exp(-2. * np.pi * l ** order /
-            lvals[:, i, j] = np.exp(-2. * l ** order /
+            lvals[:, i, j] = np.exp(-2. * np.pi * l ** order /
                                     (2. * lmax_filter) ** order)
     moho.coeffs *= lvals
 
